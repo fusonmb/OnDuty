@@ -1,0 +1,390 @@
+
+import pandas as pd
+import re
+import math
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
+from datetime import datetime
+import tkinter as tk
+from tkinter import filedialog
+from tkinter import simpledialog
+import os
+
+ON_DUTY_CODES = [
+    ".",
+    "EDIEMSEV15EDI",
+    "EMSSHFDIF",
+    "EMSSHFDIFES09",
+    "EMSSHFDIFES33",
+    ".ES04",
+    "STWEP",
+    "STWEA",
+    "*STWEP",
+    "*STWEA",
+    "+OTEMS15",
+    "+OOCEDTCPM",
+    "+OOCEDTCAM",
+    "EDI15-SE",
+    "+OOCEDTCPMES21",
+    "EDIEMSEV15EDI",    
+    "+EDIEMSEV15EDI",
+    "+OOCAC"
+]
+
+NOT_WORK_CODES = [
+    "*ESTNWPM",
+    "*ESTNWAM"
+]
+
+# Mapping of old field names to new ones a result of the excel import
+FIELD_RENAME_MAP = {
+    'Unnamed: 2': 'ID',
+    'Unnamed: 3': 'Name',
+    'Unnamed: 5': 'Code',
+    'Unnamed: 6': 'From',
+    'Unnamed: 7': 'Through',
+    'Unnamed: 8': 'Hours'
+}
+
+# Apply renaming to each record before cleaning
+def rename_fields(records):
+    renamed_records = []
+    for entry in records:
+        renamed_entry = {}
+        for k, v in entry.items():
+            new_key = FIELD_RENAME_MAP.get(k, k)  # Replace if in map, else keep original
+            renamed_entry[new_key] = v
+        renamed_records.append(renamed_entry)
+    return renamed_records
+
+def load_roster_report(rosterFileName, base_dir=None):
+    # If a base_dir is given and the filename is not already absolute
+    if base_dir and not os.path.isabs(rosterFileName):
+        file_path = os.path.join(base_dir, rosterFileName)
+    else:
+        file_path = rosterFileName
+
+    # Normalize to absolute path
+    file_path = os.path.abspath(file_path)
+
+    df = pd.read_excel(file_path)
+    data = df.to_dict(orient='records')
+
+    cleanData = clean_fields(data)
+    readableFieldsData=rename_fields(cleanData)
+    
+    return readableFieldsData
+
+def is_empty_or_nan(value):
+    return (
+        value is None or
+        (isinstance(value, float) and math.isnan(value)) or
+        (isinstance(value, str) and value.strip() == '')
+    )
+
+def clean_fields(records):
+    cleaned = []
+    for entry in records:
+        new_entry = {}
+
+        for k, v in entry.items():
+            # Skip keys with empty values
+            if is_empty_or_nan(v):
+                continue
+
+            # Remove 'Unnamed: X' keys with empty values
+            if re.match(r'^Unnamed: \d+$', k):
+                if not is_empty_or_nan(v):
+                    new_entry[k] = v
+            else:
+                new_entry[k] = v
+
+        # Skip entries that are completely empty OR contain 'Rank' as any value
+        if new_entry and 'Rank' not in [str(v).strip() for v in new_entry.values()]:
+            cleaned.append(new_entry)
+
+    return cleaned
+
+def browse_for_excel():
+    # Create a hidden root window (so only the dialog shows)
+    root = tk.Tk()
+    root.withdraw()
+
+    # Open file dialog
+    file_path = filedialog.askopenfilename(
+        title="Select an Excel file",
+        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+    )
+
+    return file_path
+def propagate_group(data, label_key="Group"):
+    result = []
+    current_label = None
+
+    for entry in data:
+        if isinstance(entry, dict):
+            keys = list(entry.keys())
+
+            # If it's a single-key dict (label)
+            if len(keys) == 1:
+                current_label = entry[keys[0]]
+                continue  # Skip adding this entry to result
+
+            # Apply the current label to the entry
+            if current_label is not None:
+                entry[label_key] = current_label
+
+            result.append(entry)
+
+    return result
+
+def filter_on_duty(data, allowed_codes, cancel_codes):
+    # Build Name -> set of codes (skip rows without Name/Code)
+    codes_by_name = {}
+    for entry in data:
+        name = entry.get("Name")
+        code = entry.get("Code")
+        if not name or not code:
+            continue
+        if name not in codes_by_name:
+            codes_by_name[name] = set()
+        codes_by_name[name].add(code)
+
+    # On duty iff: has at least one allowed AND has no cancel
+    on_duty_names = set()
+    for name, codes in codes_by_name.items():
+        has_allowed = any(c in allowed_codes for c in codes)
+        has_cancel = any(c in cancel_codes for c in codes)
+        if has_allowed and not has_cancel:
+            on_duty_names.add(name)
+
+    # Return only rows for on-duty names AND only rows whose Code is allowed
+    result = []
+    for entry in data:
+        name = entry.get("Name")
+        code = entry.get("Code")
+        if name in on_duty_names and code in allowed_codes:
+            result.append(entry)
+    return result
+    
+    # return [entry for entry in data if entry.get("Code") in allowed_codes]
+
+def assign_shift(data):
+    for entry in data:
+        from_time = entry.get("From")
+        through_time = entry.get("Through")
+
+        if from_time == "06:00": # and through_time == "18:00":
+            entry["Shift"] = "AM"
+        elif from_time == "18:00": # and through_time == "06:00":
+            entry["Shift"] = "PM"
+        else:
+            entry["Shift"] = "Special"
+    return data
+
+def find_unique_lables(data, label_key="group"):
+    unique_groups = set()
+    labels=[]
+    for entry in data:
+        if isinstance(entry, dict) and label_key in entry:
+            unique_groups.add(entry[label_key])
+
+    for group in sorted(unique_groups):
+        labels.append(group)
+    return labels
+
+def create_ouput_spreadsheet(data,outFileName):
+    # Step 1: Create workbook and worksheet
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ON Duty"
+
+    # Step 2: Collect all unique column names (keys)
+    medicHeader = ['Shift','Unit','Paramedic','EMT','3rd Employee','Shift','Unit','Paramedic','EMT','3rd Employee']
+    cheifHeader = ['Shift','Unit','Chief','Shift','Unit','Chief']
+
+    # Step 4: Write each row of data
+    groupLabels = find_unique_lables(data,'Group')
+    groupLabelsSorted = sorted(groupLabels, key=lambda x: x.split("/", 1)[-1])
+
+
+
+    medicRows =[]
+    distRows = []
+    specialRows =[]
+    otherRows = []
+    travelAMRows = []    
+    travelPMRows = []
+
+    for group in groupLabelsSorted:
+        entries = [entry for entry in data if group in entry.get('Group', '')]
+        if 'Medic' in group:
+            AMentries = [AMentry for AMentry in entries if 'AM' in AMentry.get('Shift', '')]
+            PMentries = [PMentry for PMentry in entries if 'PM' in PMentry.get('Shift', '')]           
+
+            if len(AMentries) > 3:
+                print("More than 3 Employees on {} AM".format(group))
+                AMrow = [AMentries[0]['Shift'],AMentries[0]['Group'],AMentries[0]['Name'],AMentries[1]['Name'],AMentries[2]['Name']]  
+            elif len(AMentries) == 3:
+                AMrow = [AMentries[0]['Shift'],AMentries[0]['Group'],AMentries[0]['Name'],AMentries[1]['Name'],AMentries[2]['Name']]
+            elif len(AMentries) == 2:
+                AMrow = [AMentries[0]['Shift'],AMentries[0]['Group'],AMentries[0]['Name'],AMentries[1]['Name'],'']
+            elif len(AMentries) == 1:
+                print("Less than 2 Employees on {} AM".format(group))
+                AMrow = [AMentries[0]['Shift'],AMentries[0]['Group'],AMentries[0]['Name'],'','']
+            elif len(AMentries) == 0:                
+                print("No Employees on {} AM".format(group))
+                AMrow = ['','','','','']
+
+            if len(PMentries) > 3:
+                print("More than 3 Employees on {} PM".format(group))
+                PMrow = [PMentries[0]['Shift'],PMentries[0]['Group'],PMentries[0]['Name'],PMentries[1]['Name'],PMentries[2]['Name']]  
+            elif len(PMentries) == 3:
+                PMrow = [PMentries[0]['Shift'],PMentries[0]['Group'],PMentries[0]['Name'],PMentries[1]['Name'],PMentries[2]['Name']]
+            elif len(PMentries) == 2:
+                PMrow = [PMentries[0]['Shift'],PMentries[0]['Group'],PMentries[0]['Name'],PMentries[1]['Name'],'']
+            elif len(PMentries) == 1:
+                print("Less than 2 Employees on {} PM".format(group))
+                PMrow = [PMentries[0]['Shift'],PMentries[0]['Group'],PMentries[0]['Name'],'','']
+            elif len(PMentries) == 0:                              
+                print("No Employees on {} PM".format(group))
+                PMrow = ['','','','','']
+
+            if not(all(item == '' for item in (AMrow+PMrow))):
+                medicRows.append(AMrow+PMrow)
+
+        elif 'On-Duty' in group:
+            AMentries = [AMentry for AMentry in entries if 'AM' in AMentry.get('Shift', '')]
+            PMentries = [PMentry for PMentry in entries if 'PM' in PMentry.get('Shift', '')]
+            asstRow = [AMentries[0]['Shift'],"Asst",AMentries[0]['Name'],PMentries[0]['Shift'],"Asst",PMentries[0]['Name']]
+
+        elif ('District' in group) and not('EMS' in group):   
+            AMentries = [AMentry for AMentry in entries if 'AM' in AMentry.get('Shift', '')]
+            PMentries = [PMentry for PMentry in entries if 'PM' in PMentry.get('Shift', '')]
+
+            if len(AMentries) == 1:
+                AMdistrow = [AMentries[0]['Shift'],AMentries[0]['Group'],AMentries[0]['Name']]
+            elif len(AMentries) == 0:                              
+                print("No Chief on {} PM".format(group))
+                AMdistrow = ['','','']
+
+            if len(PMentries) == 1:
+                PMdistrow = [PMentries[0]['Shift'],PMentries[0]['Group'],PMentries[0]['Name']]
+            elif len(PMentries) == 0:                              
+                print("No Chief on {} PM".format(group))
+                PMdistrow = ['','','']
+
+            if not(all(item == '' for item in (AMdistrow+PMdistrow))):
+                distRows.append(AMdistrow+PMdistrow)
+        elif 'Travelers AM' in group:
+            if len(entries) != 0:
+                for travNum in range(len(entries)):
+                    travelAMRow = [entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
+                    if not(all(item == '' for item in (travelAMRow))):
+                        travelAMRows.append(travelAMRow)
+        elif 'Travelers PM' in group:
+            if len(entries) != 0:
+                for travNum in range(len(entries)):
+                    travelPMRow = [entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
+                    if not(all(item == '' for item in (travelPMRow))):
+                        travelPMRows.append(travelPMRow)
+            
+        else:            
+            if len(entries) != 0:
+                for specNum in range(len(entries)):
+                    specialRow = [entries[specNum]['From']+'-'+entries[specNum]['Through'],entries[specNum]['Group'],entries[specNum]['Name']]
+                    if not(all(item == '' for item in (specialRow))):
+                        specialRows.append(specialRow)
+    
+    ws.append(cheifHeader)
+    ws.append(asstRow)
+    for row in distRows:
+        ws.append(row)
+    ws.append([]); ws.append([]); ws.append([])
+    ws.append(medicHeader)
+    for row in medicRows:
+        ws.append(row)
+    ws.append([]);  
+    for row in travelAMRows:
+        ws.append(row)
+    ws.append([]);  
+    for row in travelPMRows:
+        ws.append(row)
+    ws.append([]);  
+    for row in otherRows:
+        ws.append(row)   
+    ws.append([]);
+    for row in specialRows:
+        ws.append(row)
+
+    # Step 5: Auto-adjust column widths
+    for col in ws.columns:
+        max_length = 0
+        col_letter = get_column_letter(col[0].column)  # e.g. "A", "B", "C"
+        for cell in col:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except:
+                pass
+        adjusted_width = max_length + 2  # add some padding
+        ws.column_dimensions[col_letter].width = adjusted_width
+
+    # Step 6: Save to file
+    wb.save(outFileName)
+
+def get_output_filename(default_dir="."):
+    # Create hidden root window so only the dialog shows
+    root = tk.Tk()
+    root.withdraw()
+
+    # Build default name with current date/time
+    now_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    default_name = f"On_Duty_Roster_{now_str}.xlsx"
+
+    # Ask user for filename
+    filename = simpledialog.askstring(
+        "Save As",
+        "Enter output file name:",
+        initialvalue=default_name
+    )
+
+    root.destroy()
+
+    if not filename:
+        return None  # user canceled
+
+    # If user only typed a name, put it in default_dir
+    if not os.path.isabs(filename):
+        filename = os.path.join(default_dir, filename)
+
+    # Ensure extension is .xlsx
+    if not filename.lower().endswith(".xlsx"):
+        filename += ".xlsx"
+
+    return filename
+
+def main():
+    
+    # inFileName = 'Roster Report-2_FEB01.xlsx'
+    # inFileName = 'Roster Report-3_FEB02.xlsx'
+    # inFileName = 'Roster Report-4_DEC31.xlsx'
+    # inFileName = 'Roster Report-5_AUG31.xlsx'
+    # inFileName = 'Roster Report-6_SEP01.xlsx'    
+    # inFileName = 'Roster Report-7_SEP02.xlsx'
+    # inFileName = 'Sept 5.xlsx'
+    inFileName = browse_for_excel()
+    print("Input File Path: {} ".format(inFileName))
+
+    outFileName = get_output_filename()
+
+    roster = load_roster_report(inFileName)
+    rosterWitGroup = propagate_group(roster)
+    onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES)
+    onDutyShifts = assign_shift(onDutyRoster) 
+
+    create_ouput_spreadsheet(onDutyShifts,outFileName)
+
+if __name__ == "__main__":
+    main()
