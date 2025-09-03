@@ -20,6 +20,7 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import simpledialog
 import os
+import sys
 
 ON_DUTY_CODES = [
     ".",
@@ -39,6 +40,8 @@ ON_DUTY_CODES = [
     "+OOCEDTCPMES21",
     "EDIEMSEV15EDI",    
     "+EDIEMSEV15EDI",
+    "+OTEMS15-SS",
+    "EMSSHFDIFEMSS01",
     "+OOCAC"
 ]
 
@@ -116,18 +119,6 @@ def clean_fields(records):
 
     return cleaned
 
-def browse_for_excel():
-    # Create a hidden root window (so only the dialog shows)
-    root = tk.Tk()
-    root.withdraw()
-
-    # Open file dialog
-    file_path = filedialog.askopenfilename(
-        title="Select an Excel file",
-        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
-    )
-
-    return file_path
 def propagate_group(data, label_key="Group"):
     result = []
     current_label = None
@@ -219,13 +210,14 @@ def create_ouput_spreadsheet(data,outFileName):
     groupLabelsSorted = sorted(groupLabels, key=lambda x: x.split("/", 1)[-1])
 
 
-
+    asstRow = []
     medicRows =[]
     distRows = []
     specialRows =[]
     otherRows = []
     travelAMRows = []    
     travelPMRows = []
+    AsstFound = False
 
     for group in groupLabelsSorted:
         entries = [entry for entry in data if group in entry.get('Group', '')]
@@ -265,10 +257,25 @@ def create_ouput_spreadsheet(data,outFileName):
                 medicRows.append(AMrow+PMrow)
 
         elif 'On-Duty' in group:
+            AsstFound = True
             AMentries = [AMentry for AMentry in entries if 'AM' in AMentry.get('Shift', '')]
             PMentries = [PMentry for PMentry in entries if 'PM' in PMentry.get('Shift', '')]
-            asstRow = [AMentries[0]['Shift'],"Asst",AMentries[0]['Name'],PMentries[0]['Shift'],"Asst",PMentries[0]['Name']]
 
+            if len(AMentries) == 1:
+                AMASSrow = [AMentries[0]['Shift'],'ASST',AMentries[0]['Name']]
+            elif len(AMentries) == 0:                              
+                print("No ASS on Duty {} PM".format(group))
+                AMASSrow = ['AM','ASST','']
+
+            if len(PMentries) == 1:
+                PMASSrow = [PMentries[0]['Shift'],'ASST',PMentries[0]['Name']]
+            elif len(PMentries) == 0:                              
+                print("No ASS on Duty {} PM".format(group))
+                PMASSrow = ['PM','ASST','']
+
+            if not(all(item == '' for item in (AMASSrow+PMASSrow))):
+                asstRow = (AMASSrow+PMASSrow)
+                
         elif ('District' in group) and not('EMS' in group):   
             AMentries = [AMentry for AMentry in entries if 'AM' in AMentry.get('Shift', '')]
             PMentries = [PMentry for PMentry in entries if 'PM' in PMentry.get('Shift', '')]
@@ -298,20 +305,23 @@ def create_ouput_spreadsheet(data,outFileName):
                 for travNum in range(len(entries)):
                     travelPMRow = [entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
                     if not(all(item == '' for item in (travelPMRow))):
-                        travelPMRows.append(travelPMRow)
-            
+                        travelPMRows.append(travelPMRow)            
         else:            
             if len(entries) != 0:
                 for specNum in range(len(entries)):
                     specialRow = [entries[specNum]['From']+'-'+entries[specNum]['Through'],entries[specNum]['Group'],entries[specNum]['Name']]
                     if not(all(item == '' for item in (specialRow))):
                         specialRows.append(specialRow)
-    
+
+    if not(AsstFound):
+        asstRow = ['AM','ASST','','PM','ASST','']
+        print("No ASSes on Duty")
+
     ws.append(cheifHeader)
     ws.append(asstRow)
     for row in distRows:
         ws.append(row)
-    ws.append([]); ws.append([]); ws.append([])
+    ws.append([]); ws.append([])
     ws.append(medicHeader)
     for row in medicRows:
         ws.append(row)
@@ -344,51 +354,66 @@ def create_ouput_spreadsheet(data,outFileName):
     # Step 6: Save to file
     wb.save(outFileName)
 
-def get_output_filename(default_dir="."):
-    # Create hidden root window so only the dialog shows
+def browse_for_excel():
+    # Create a hidden root window (so only the dialog shows)
     root = tk.Tk()
     root.withdraw()
 
-    # Build default name with current date/time
+    # Open file dialog
+    file_path = filedialog.askopenfilename(
+        title="Select an Excel file",
+        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+    )
+
+    root.destroy()
+    if not file_path:  # user canceled
+        print("No input file selected. Exiting...")
+        sys.exit(0)
+
+    return file_path
+
+def get_output_filename(initialdir="."):
+    import os, sys
+    import tkinter as tk
+    from tkinter import filedialog
+    from datetime import datetime
+
+    root = tk.Tk()
+    root.withdraw()
+
     now_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
     default_name = f"On_Duty_Roster_{now_str}.xlsx"
 
-    # Ask user for filename
-    filename = simpledialog.askstring(
-        "Save As",
-        "Enter output file name:",
-        initialvalue=default_name
+    # One popup: choose folder AND filename together
+    path = filedialog.asksaveasfilename(
+        title="Save As",
+        initialdir=initialdir,
+        initialfile=default_name,
+        defaultextension=".xlsx",
+        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
     )
 
     root.destroy()
 
-    if not filename:
-        return None  # user canceled
+    if not path:
+        print("No output file selected. Exiting...")
+        sys.exit(0)
 
-    # If user only typed a name, put it in default_dir
-    if not os.path.isabs(filename):
-        filename = os.path.join(default_dir, filename)
+    # Ensure .xlsx extension (asksaveasfilename should add it, but double-check)
+    if not path.lower().endswith(".xlsx"):
+        path += ".xlsx"
 
-    # Ensure extension is .xlsx
-    if not filename.lower().endswith(".xlsx"):
-        filename += ".xlsx"
-
-    return filename
+    return os.path.abspath(path)
 
 def main():
-    
-    # inFileName = 'Roster Report-2_FEB01.xlsx'
-    # inFileName = 'Roster Report-3_FEB02.xlsx'
-    # inFileName = 'Roster Report-4_DEC31.xlsx'
-    # inFileName = 'Roster Report-5_AUG31.xlsx'
-    # inFileName = 'Roster Report-6_SEP01.xlsx'    
-    # inFileName = 'Roster Report-7_SEP02.xlsx'
-    # inFileName = 'Sept 5.xlsx'
+
+    # inFileName = './rosters/Roster Report-2.xlsx'
+    # outFileName = 'testOut.xlsx'
+
     inFileName = browse_for_excel()
-    print("Input File Path: {} ".format(inFileName))
+    outFileName = get_output_filename()    
 
-    outFileName = get_output_filename()
-
+    print("Input File Path: {} ".format(inFileName))  
     roster = load_roster_report(inFileName)
     rosterWitGroup = propagate_group(roster)
     onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES)
