@@ -1,3 +1,13 @@
+"""
+Author: Mike Fuson
+Purpose: Created to help my brother quickly determine 
+    which crew members are working in Nashville EMS.
+
+Notes: Simplifies scheduling and reduces time spent
+    figuring out shift assignments.
+
+PS: Love You Bro
+"""
 
 import pandas as pd
 import re
