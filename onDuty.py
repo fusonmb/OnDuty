@@ -13,6 +13,7 @@ import pandas as pd
 import re
 import math
 from openpyxl import Workbook
+from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 from datetime import datetime
@@ -70,6 +71,31 @@ def rename_fields(records):
             renamed_entry[new_key] = v
         renamed_records.append(renamed_entry)
     return renamed_records
+
+def get_report_dates(rosterFileName):
+    wb = load_workbook(rosterFileName, data_only=True)
+    ws = wb.active  # or wb["Sheet1"]
+    centerHeader = ws.oddHeader.center.text if ws.oddHeader else None
+    centerFooter = ws.oddFooter.center.text if ws.oddFooter else None
+
+    m = re.search(r"\[(\d{2}/\d{2}/\d{4})\]", centerHeader)
+    if m:
+        report_date = m.group(1)
+        report_date = report_date.replace("/", "-")
+    else:
+        print("No Report Date Found")
+        report_date = ''
+
+    m = re.search(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})", centerFooter)
+
+    if m:
+        generated_date = m.group(1)
+        generated_date = generated_date.replace("/", "-")
+    else:
+        print("No Generated Date/Time Found")
+        generated_date = ''
+
+    return report_date,generated_date
 
 def load_roster_report(rosterFileName, base_dir=None):
     # If a base_dir is given and the filename is not already absolute
@@ -195,7 +221,7 @@ def find_unique_lables(data, label_key="group"):
         labels.append(group)
     return labels
 
-def create_ouput_spreadsheet(data,outFileName):
+def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     # Step 1: Create workbook and worksheet
     wb = Workbook()
     ws = wb.active
@@ -316,7 +342,12 @@ def create_ouput_spreadsheet(data,outFileName):
     if not(AsstFound):
         asstRow = ['AM','ASST','','PM','ASST','']
         print("No ASSes on Duty")
+    ReportDateRow        = ['','  On-Duty Roster Report: '+reportDate]
+    GeneratedDateTimeRow = ['','Roster Report Generated: '+generatedDateTime]
 
+    ws.append(ReportDateRow)
+    ws.append(GeneratedDateTimeRow)
+    ws.append([])
     ws.append(cheifHeader)
     ws.append(asstRow)
     for row in distRows:
@@ -372,7 +403,7 @@ def browse_for_excel():
 
     return file_path
 
-def get_output_filename(initialdir="."):
+def get_output_filename(reportDate,initialdir="."):
     import os, sys
     import tkinter as tk
     from tkinter import filedialog
@@ -382,7 +413,7 @@ def get_output_filename(initialdir="."):
     root.withdraw()
 
     now_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    default_name = f"On_Duty_Roster_{now_str}.xlsx"
+    default_name = f"On_Duty_Roster_{reportDate}.xlsx"
 
     # One popup: choose folder AND filename together
     path = filedialog.asksaveasfilename(
@@ -411,15 +442,15 @@ def main():
     # outFileName = 'testOut.xlsx'
 
     inFileName = browse_for_excel()
-    outFileName = get_output_filename()    
-
     print("Input File Path: {} ".format(inFileName))  
+    reportDate , generatedDateTime = get_report_dates(inFileName)
     roster = load_roster_report(inFileName)
     rosterWitGroup = propagate_group(roster)
     onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES)
     onDutyShifts = assign_shift(onDutyRoster) 
 
-    create_ouput_spreadsheet(onDutyShifts,outFileName)
+    outFileName = get_output_filename(reportDate)
+    create_ouput_spreadsheet(onDutyShifts,outFileName,reportDate,generatedDateTime)
 
 if __name__ == "__main__":
     main()
