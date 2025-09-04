@@ -391,17 +391,17 @@ def browse_for_excel():
     root.withdraw()
 
     # Open file dialog
-    file_path = filedialog.askopenfilename(
-        title="Select an Excel file",
+    file_paths = filedialog.askopenfilenames(
+        title="Select Roster File(s)",
         filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
     )
 
     root.destroy()
-    if not file_path:  # user canceled
+    if not file_paths:  # user canceled
         print("No input file selected. Exiting...")
         sys.exit(0)
 
-    return file_path
+    return list(file_paths)
 
 def get_output_filename(reportDate,initialdir="."):
     import os, sys
@@ -441,16 +441,20 @@ def main():
     # inFileName = './rosters/Roster Report-2.xlsx'
     # outFileName = 'testOut.xlsx'
 
-    inFileName = browse_for_excel()
-    print("Input File Path: {} ".format(inFileName))  
-    reportDate , generatedDateTime = get_report_dates(inFileName)
-    roster = load_roster_report(inFileName)
-    rosterWitGroup = propagate_group(roster)
-    onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES)
-    onDutyShifts = assign_shift(onDutyRoster) 
-
-    outFileName = get_output_filename(reportDate)
-    create_ouput_spreadsheet(onDutyShifts,outFileName,reportDate,generatedDateTime)
+    inFileNames = browse_for_excel()
+    for  inFileName in inFileNames:
+        try:
+            print("Input File Path: {} ".format(inFileName))  
+            reportDate , generatedDateTime = get_report_dates(inFileName)
+            roster = load_roster_report(inFileName)
+            rosterWitGroup = propagate_group(roster)
+            onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES)
+            onDutyShifts = assign_shift(onDutyRoster)
+            outFileName = get_output_filename(reportDate)
+            create_ouput_spreadsheet(onDutyShifts,outFileName,reportDate,generatedDateTime)
+        except Exception as e:
+            print(f"Error processing {inFileName}: {e}")
+            continue  # optional, loop naturally continues anyway
 
 if __name__ == "__main__":
     main()
