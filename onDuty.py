@@ -42,6 +42,7 @@ ON_DUTY_CODES = [
     "EDIEMSEV15EDI",    
     "+EDIEMSEV15EDI",
     "+OTEMS15-SS",
+    "OTS15",
     "EMSSHFDIFEMSS01",
     "+OOCAC"
 ]
