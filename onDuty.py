@@ -24,12 +24,10 @@ import os
 import sys
 
 ON_DUTY_CODES = [
-    ".",
     "EDIEMSEV15EDI",
     "EMSSHFDIF",
     "EMSSHFDIFES09",
     "EMSSHFDIFES33",
-    ".ES04",
     "STWEP",
     "STWEA",
     "*STWEP",
@@ -38,6 +36,7 @@ ON_DUTY_CODES = [
     "+OOCEDTCPM",
     "+OOCEDTCAM",
     "EDI15-SE",
+    "+OOCEDTCAMES21",
     "+OOCEDTCPMES21",
     "EDIEMSEV15EDI",    
     "+EDIEMSEV15EDI",
@@ -46,10 +45,28 @@ ON_DUTY_CODES = [
     "EMSSHFDIFEMSS01",
     "+OOCAC"
 ]
-
+GENERIC_ON_DUTY_CODES = [
+    "."
+]
 NOT_WORK_CODES = [
     "*ESTNWPM",
-    "*ESTNWAM"
+    "*ESTNWAM",
+    ".ESTNWAM",
+    ".ESTNWPM",
+    ".HPM",
+    ".HAM",
+    ".PFLMPMMaternity",
+    ".PFLMAMMaternity",
+    ".FMLA-AM",
+    ".FMLA-PM",
+    ".PLPM",
+    ".PLAM",
+    ".EMS MLAM3",
+    ".EMS MLPM3",
+    ".PLPM",
+    ".PLAM",
+    ".VAM",
+    ".VPM"
 ]
 
 # Mapping of old field names to new ones a result of the excel import
@@ -110,7 +127,6 @@ def load_roster_report(rosterFileName, base_dir=None):
 
     df = pd.read_excel(file_path)
     data = df.to_dict(orient='records')
-
     cleanData = clean_fields(data)
     readableFieldsData=rename_fields(cleanData)
     
@@ -167,36 +183,56 @@ def propagate_group(data, label_key="Group"):
 
     return result
 
-def filter_on_duty(data, allowed_codes, cancel_codes):
-    # Build Name -> set of codes (skip rows without Name/Code)
+def filter_on_duty(data, allowed_codes, cancel_codes, generic_codes):
+    """
+    Filters a list of dicts (with "Name" and "Code") to find who is on duty.
+
+    On duty means:
+      - A person has at least one allowed code (direct match or contains a generic code)
+      - And they do not have any cancel codes.
+
+    Args:
+        data (list[dict]): Each dict has "Name" and "Code".
+        allowed_codes (set[str]): Exact allowed code strings.
+        cancel_codes (set[str]): Exact cancel code strings.
+        generic_codes (set[str]): Generic substrings that may appear inside a Code.
+
+    Returns:
+        list[dict]: Filtered rows for on-duty names, only with allowed/generic codes.
+    """
+
+    def is_allowed(code):
+        # Exact allowed OR contains any generic substring
+        if code in allowed_codes:
+            return True
+        return any(g in code for g in generic_codes)
+
+    # Build Name -> set of codes
     codes_by_name = {}
     for entry in data:
         name = entry.get("Name")
         code = entry.get("Code")
         if not name or not code:
             continue
-        if name not in codes_by_name:
-            codes_by_name[name] = set()
-        codes_by_name[name].add(code)
+        codes_by_name.setdefault(name, set()).add(code)
 
-    # On duty iff: has at least one allowed AND has no cancel
+    # Determine who is on duty
     on_duty_names = set()
     for name, codes in codes_by_name.items():
-        has_allowed = any(c in allowed_codes for c in codes)
+        has_allowed = any(is_allowed(c) for c in codes)
         has_cancel = any(c in cancel_codes for c in codes)
         if has_allowed and not has_cancel:
             on_duty_names.add(name)
 
-    # Return only rows for on-duty names AND only rows whose Code is allowed
+    # Return filtered rows
     result = []
     for entry in data:
         name = entry.get("Name")
         code = entry.get("Code")
-        if name in on_duty_names and code in allowed_codes:
+        if name in on_duty_names and is_allowed(code):
             result.append(entry)
+
     return result
-    
-    # return [entry for entry in data if entry.get("Code") in allowed_codes]
 
 def assign_shift(data):
     for entry in data:
@@ -222,7 +258,23 @@ def find_unique_lables(data, label_key="group"):
         labels.append(group)
     return labels
 
+
+def sort_by_first_string(data):
+    """
+    Sorts a list of lists by the first string in each sublist.
+
+    Args:
+        data (list): A list of lists where the first element of each sublist is a string.
+
+    Returns:
+        list: A new list sorted by the first element of each sublist.
+    """
+    return sorted(data, key=lambda x: x[0])
+
 def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
+    # for entry in range(0,20):
+    #     print(data[entry])
+
     # Step 1: Create workbook and worksheet
     wb = Workbook()
     ws = wb.active
@@ -343,8 +395,10 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     if not(AsstFound):
         asstRow = ['AM','ASST','','PM','ASST','']
         print("No ASSes on Duty")
-    ReportDateRow        = ['','  On-Duty Roster Report: '+reportDate]
-    GeneratedDateTimeRow = ['','Roster Report Generated: '+generatedDateTime]
+    ReportDateRow        = ['','On-Duty Roster Report\n'+reportDate]
+    GeneratedDateTimeRow = ['','Roster Report Generated\n'+generatedDateTime]
+
+    specialRows = sort_by_first_string(specialRows)
 
     ws.append(ReportDateRow)
     ws.append(GeneratedDateTimeRow)
@@ -449,7 +503,7 @@ def main():
             reportDate , generatedDateTime = get_report_dates(inFileName)
             roster = load_roster_report(inFileName)
             rosterWitGroup = propagate_group(roster)
-            onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES)
+            onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES,GENERIC_ON_DUTY_CODES)
             onDutyShifts = assign_shift(onDutyRoster)
             outFileName = get_output_filename(reportDate)
             create_ouput_spreadsheet(onDutyShifts,outFileName,reportDate,generatedDateTime)
