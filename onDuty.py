@@ -258,6 +258,24 @@ def find_unique_lables(data, label_key="group"):
         labels.append(group)
     return labels
 
+def truncate_group_values(data, separator="/"):
+    """
+    Truncate the 'Group' field of each dictionary in a list to everything after the separator.
+
+    Args:
+        data (list of dict): Input array of dictionaries.
+        separator (str): The delimiter to split on (default is "/").
+
+    Returns:
+        list of dict: Updated list with truncated 'Group' values.
+    """
+    for item in data:
+        if "Group" in item and isinstance(item["Group"], str):
+            # Split and strip spaces around the separator
+            parts = item["Group"].split(separator)
+            if len(parts) > 1:
+                item["Group"] = parts[-1].strip()
+    return data
 
 def sort_by_first_string(data):
     """
@@ -271,20 +289,24 @@ def sort_by_first_string(data):
     """
     return sorted(data, key=lambda x: x[0])
 
+
+
 def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     # for entry in range(0,20):
     #     print(data[entry])
 
-    # Step 1: Create workbook and worksheet
+    #Create workbook and worksheet
     wb = Workbook()
     ws = wb.active
     ws.title = "ON Duty"
 
-    # Step 2: Collect all unique column names (keys)
+    #Collect all unique column names (keys)
     medicHeader = ['Shift','Unit','Paramedic','EMT','3rd Employee','Shift','Unit','Paramedic','EMT','3rd Employee']
     cheifHeader = ['Shift','Unit','Chief','Shift','Unit','Chief']
+    #Truncated the Group String
+    data = truncate_group_values(data, separator="/")
 
-    # Step 4: Write each row of data
+    #Write each row of data
     groupLabels = find_unique_lables(data,'Group')
     groupLabelsSorted = sorted(groupLabels, key=lambda x: x.split("/", 1)[-1])
 
@@ -395,8 +417,8 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     if not(AsstFound):
         asstRow = ['AM','ASST','','PM','ASST','']
         print("No ASSes on Duty")
-    ReportDateRow        = ['','On-Duty Roster Report\n'+reportDate]
-    GeneratedDateTimeRow = ['','Roster Report Generated\n'+generatedDateTime]
+    ReportDateRow        = ['','','On-Duty Roster Report\n'+reportDate]
+    GeneratedDateTimeRow = ['','','Roster Report Generated\n'+generatedDateTime]
 
     specialRows = sort_by_first_string(specialRows)
 
@@ -424,7 +446,7 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     for row in specialRows:
         ws.append(row)
 
-    # Step 5: Auto-adjust column widths
+    #Auto-adjust column widths
     for col in ws.columns:
         max_length = 0
         col_letter = get_column_letter(col[0].column)  # e.g. "A", "B", "C"
@@ -437,7 +459,17 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
         adjusted_width = max_length + 2  # add some padding
         ws.column_dimensions[col_letter].width = adjusted_width
 
-    # Step 6: Save to file
+    # --- Page landscape ---
+    ws.page_setup.orientation = "landscape"
+
+    # --- Scaling mode: Fit to width ---
+    # This means it will shrink contents to fit the width of 1 page,
+    # and let the height span across as many pages as needed
+    ws.page_setup.scale = None
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0  # 0 means "as many as needed"
+    #Save to file
     wb.save(outFileName)
 
 def browse_for_excel():
@@ -506,6 +538,7 @@ def main():
             onDutyRoster = filter_on_duty(rosterWitGroup,ON_DUTY_CODES,NOT_WORK_CODES,GENERIC_ON_DUTY_CODES)
             onDutyShifts = assign_shift(onDutyRoster)
             outFileName = get_output_filename(reportDate)
+            print("Output File Path: {} ".format(outFileName))
             create_ouput_spreadsheet(onDutyShifts,outFileName,reportDate,generatedDateTime)
         except Exception as e:
             print(f"Error processing {inFileName}: {e}")
