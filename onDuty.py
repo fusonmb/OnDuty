@@ -14,7 +14,7 @@ import re
 import math
 from openpyxl import Workbook
 from openpyxl import load_workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 import tkinter as tk
@@ -290,6 +290,38 @@ def sort_by_second_string(data):
     return sorted(data, key=lambda x: x[1])
 
 
+# -------- Styles --------
+thin = Side(border_style="thin", color="000000")
+row_border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+fill_white = PatternFill(fill_type="solid", start_color="FFFFFF", end_color="FFFFFF")
+fill_gray  = PatternFill(fill_type="solid", start_color="F2F2F2", end_color="F2F2F2")  # light gray
+
+# -------- Append helper --------
+def append_row_with_format(ws, values, min_col=1, max_col=None, header_rows=1):
+    """
+    Append a row of values, apply borders and alternating fill.
+    Alternating fill starts after header_rows.
+    """
+    ws.append(values)
+    r = ws.max_row
+
+    if max_col is None:
+        max_col = len(values)
+
+    # Decide fill color (alternate by row number relative to header)
+    band_idx = r - header_rows
+    if band_idx <= 0:  # header or above → keep white
+        row_fill = fill_white
+    else:
+        row_fill = fill_gray if band_idx % 2 == 0 else fill_white
+
+    # Style each cell in the row
+    for c in range(min_col, max_col + 1):
+        cell = ws.cell(row=r, column=c)
+        cell.border = row_border
+        cell.fill = row_fill
+
 
 def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     # for entry in range(0,20):
@@ -431,7 +463,8 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     ws.append([])
     ws.append(medicHeader)
     for row in medicRows:
-        ws.append(row)
+        # ws.append(row)
+        append_row_with_format(ws,row)
     ws.append([])
     for row in travelAMRows:
         ws.append(row)
