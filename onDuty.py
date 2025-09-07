@@ -277,7 +277,7 @@ def truncate_group_values(data, separator="/"):
                 item["Group"] = parts[-1].strip()
     return data
 
-def sort_by_first_string(data):
+def sort_by_second_string(data):
     """
     Sorts a list of lists by the first string in each sublist.
 
@@ -287,7 +287,7 @@ def sort_by_first_string(data):
     Returns:
         list: A new list sorted by the first element of each sublist.
     """
-    return sorted(data, key=lambda x: x[0])
+    return sorted(data, key=lambda x: x[1])
 
 
 
@@ -302,7 +302,7 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
 
     #Collect all unique column names (keys)
     medicHeader = ['Shift','Unit','Paramedic','EMT','3rd Employee','Shift','Unit','Paramedic','EMT','3rd Employee']
-    cheifHeader = ['Shift','Unit','Chief','Shift','Unit','Chief']
+    cheifHeader = ['Shift','Unit','Chief','','','Shift','Unit','Chief']
     #Truncated the Group String
     data = truncate_group_values(data, separator="/")
 
@@ -315,7 +315,6 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     medicRows =[]
     distRows = []
     specialRows =[]
-    otherRows = []
     travelAMRows = []    
     travelPMRows = []
     AsstFound = False
@@ -375,7 +374,7 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
                 PMASSrow = ['PM','ASST','']
 
             if not(all(item == '' for item in (AMASSrow+PMASSrow))):
-                asstRow = (AMASSrow+PMASSrow)
+                asstRow = (AMASSrow+['','']+PMASSrow)
                 
         elif ('District' in group) and not('EMS' in group):   
             AMentries = [AMentry for AMentry in entries if 'AM' in AMentry.get('Shift', '')]
@@ -394,33 +393,33 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
                 PMdistrow = ['','','']
 
             if not(all(item == '' for item in (AMdistrow+PMdistrow))):
-                distRows.append(AMdistrow+PMdistrow)
+                distRows.append(AMdistrow+['','']+PMdistrow)
         elif 'Travelers AM' in group:
             if len(entries) != 0:
                 for travNum in range(len(entries)):
-                    travelAMRow = [entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
+                    travelAMRow = ['',entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
                     if not(all(item == '' for item in (travelAMRow))):
                         travelAMRows.append(travelAMRow)
         elif 'Travelers PM' in group:
             if len(entries) != 0:
                 for travNum in range(len(entries)):
-                    travelPMRow = [entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
+                    travelPMRow = ['',entries[travNum]['From']+'-'+entries[travNum]['Through'],entries[travNum]['Group'],entries[travNum]['Name']]
                     if not(all(item == '' for item in (travelPMRow))):
                         travelPMRows.append(travelPMRow)            
         else:            
             if len(entries) != 0:
                 for specNum in range(len(entries)):
-                    specialRow = [entries[specNum]['From']+'-'+entries[specNum]['Through'],entries[specNum]['Group'],entries[specNum]['Name']]
+                    specialRow = ['',entries[specNum]['From']+'-'+entries[specNum]['Through'],entries[specNum]['Group'],entries[specNum]['Name']]
                     if not(all(item == '' for item in (specialRow))):
                         specialRows.append(specialRow)
 
     if not(AsstFound):
-        asstRow = ['AM','ASST','','PM','ASST','']
+        asstRow = ['AM','ASST','','','','PM','ASST','']
         print("No ASSes on Duty")
     ReportDateRow        = ['','','On-Duty Roster Report\n'+reportDate]
     GeneratedDateTimeRow = ['','','Roster Report Generated\n'+generatedDateTime]
 
-    specialRows = sort_by_first_string(specialRows)
+    specialRows = sort_by_second_string(specialRows)
 
     ws.append(ReportDateRow)
     ws.append(GeneratedDateTimeRow)
@@ -429,20 +428,17 @@ def create_ouput_spreadsheet(data,outFileName,reportDate,generatedDateTime):
     ws.append(asstRow)
     for row in distRows:
         ws.append(row)
-    ws.append([]); ws.append([])
+    ws.append([])
     ws.append(medicHeader)
     for row in medicRows:
         ws.append(row)
-    ws.append([]);  
+    ws.append([])
     for row in travelAMRows:
         ws.append(row)
-    ws.append([]);  
+    ws.append([])
     for row in travelPMRows:
         ws.append(row)
-    ws.append([]);  
-    for row in otherRows:
-        ws.append(row)   
-    ws.append([]);
+    ws.append([])
     for row in specialRows:
         ws.append(row)
 
