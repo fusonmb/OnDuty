@@ -68,6 +68,12 @@ NOT_WORK_CODES = [
     ".PLAM",
     ".VAM",
     ".LWOP",
+    ".FMLA-AMChild",
+    "+S120PM0.",
+    "+S120PM0.",
+    ".SASC",
+    ".EVPM",
+    ".FMLA-AMChild",
     ".VPM"
 ]
 
